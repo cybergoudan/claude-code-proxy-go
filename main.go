@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -81,7 +82,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request, upstreamBase, upstre
 
 	// Force model to configured upstream model (as requested)
 	_ = req.Model
-	
+
 	// Convert to upstream OpenAI chat.completions request
 	upReq, err := toUpstreamChatCompletions(req, upstreamModel)
 	if err != nil {
@@ -108,14 +109,14 @@ func handleMessages(w http.ResponseWriter, r *http.Request, upstreamBase, upstre
 // ------------------ Anthropic request/response types (minimal) ------------------
 
 type anthropicMessagesRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	System    any             `json:"system,omitempty"` // string or array of blocks
-	Messages  []anthropicMsg  `json:"messages"`
-	Tools     []anthropicTool `json:"tools,omitempty"`
-	ToolChoice any            `json:"tool_choice,omitempty"`
-	Stream    bool            `json:"stream,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
+	Model       string          `json:"model"`
+	MaxTokens   int             `json:"max_tokens"`
+	System      any             `json:"system,omitempty"` // string or array of blocks
+	Messages    []anthropicMsg  `json:"messages"`
+	Tools       []anthropicTool `json:"tools,omitempty"`
+	ToolChoice  any             `json:"tool_choice,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
 }
 
 type anthropicMsg struct {
@@ -132,25 +133,25 @@ type anthropicTool struct {
 // ------------------ OpenAI upstream request types ------------------
 
 type upChatCompletionsRequest struct {
-	Model       string         `json:"model"`
-	Messages    []upMessage    `json:"messages"`
-	Tools       []upTool       `json:"tools,omitempty"`
-	ToolChoice  any            `json:"tool_choice,omitempty"`
-	MaxTokens   int            `json:"max_tokens,omitempty"`
-	Temperature *float64       `json:"temperature,omitempty"`
-	Stream      bool           `json:"stream,omitempty"`
+	Model       string      `json:"model"`
+	Messages    []upMessage `json:"messages"`
+	Tools       []upTool    `json:"tools,omitempty"`
+	ToolChoice  any         `json:"tool_choice,omitempty"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
+	Temperature *float64    `json:"temperature,omitempty"`
+	Stream      bool        `json:"stream,omitempty"`
 }
 
 type upMessage struct {
-	Role       string        `json:"role"`
-	Content    any           `json:"content,omitempty"`
-	ToolCalls  []upToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
-	Name       string        `json:"name,omitempty"`
+	Role       string       `json:"role"`
+	Content    any          `json:"content,omitempty"`
+	ToolCalls  []upToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string       `json:"tool_call_id,omitempty"`
+	Name       string       `json:"name,omitempty"`
 }
 
 type upTool struct {
-	Type     string        `json:"type"`
+	Type     string         `json:"type"`
 	Function upToolFunction `json:"function"`
 }
 
@@ -161,9 +162,9 @@ type upToolFunction struct {
 }
 
 type upToolCall struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"` // "function"
-	Function upToolCallFunc  `json:"function"`
+	ID       string         `json:"id"`
+	Type     string         `json:"type"` // "function"
+	Function upToolCallFunc `json:"function"`
 }
 
 type upToolCallFunc struct {
@@ -226,7 +227,7 @@ func toUpstreamChatCompletions(req anthropicMessagesRequest, upstreamModel strin
 					name, _ := m["name"].(string)
 					if name != "" {
 						out.ToolChoice = map[string]any{
-							"type": "function",
+							"type":     "function",
 							"function": map[string]any{"name": name},
 						}
 					}
@@ -405,8 +406,8 @@ type openAIChatCompletionsResponse struct {
 	Created int64  `json:"created"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index        int `json:"index"`
-		Message      struct {
+		Index   int `json:"index"`
+		Message struct {
 			Role      string       `json:"role"`
 			Content   string       `json:"content"`
 			ToolCalls []upToolCall `json:"tool_calls,omitempty"`
@@ -422,13 +423,13 @@ type openAIChatCompletionsResponse struct {
 
 // Anthropic-style response (minimal)
 type anthropicMessagesResponse struct {
-	ID         string            `json:"id"`
-	Type       string            `json:"type"`
-	Role       string            `json:"role"`
-	Model      string            `json:"model"`
-	Content    []map[string]any  `json:"content"`
-	StopReason string            `json:"stop_reason,omitempty"`
-	Usage      map[string]any    `json:"usage,omitempty"`
+	ID         string           `json:"id"`
+	Type       string           `json:"type"`
+	Role       string           `json:"role"`
+	Model      string           `json:"model"`
+	Content    []map[string]any `json:"content"`
+	StopReason string           `json:"stop_reason,omitempty"`
+	Usage      map[string]any   `json:"usage,omitempty"`
 }
 
 func callUpstreamOnce(ctx context.Context, upstreamBase, upstreamKey string, upReq upChatCompletionsRequest) (anthropicMessagesResponse, error) {
@@ -436,7 +437,7 @@ func callUpstreamOnce(ctx context.Context, upstreamBase, upstreamKey string, upR
 	upReq.Stream = false
 
 	b, _ := json.Marshal(upReq)
-	u := upstreamBase + "/v1/chat/completions"
+	u := joinURL(upstreamBase, "/chat/completions")
 	hreq, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+upstreamKey)
@@ -469,9 +470,9 @@ func callUpstreamOnce(ctx context.Context, upstreamBase, upstreamKey string, upR
 	if len(msg.ToolCalls) > 0 {
 		for _, tc := range msg.ToolCalls {
 			content = append(content, map[string]any{
-				"type": "tool_use",
-				"id":   tc.ID,
-				"name": tc.Function.Name,
+				"type":  "tool_use",
+				"id":    tc.ID,
+				"name":  tc.Function.Name,
 				"input": mustParseJSON(tc.Function.Arguments),
 			})
 		}
@@ -547,7 +548,7 @@ type openAIStreamChunk struct {
 func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstreamBase, upstreamKey string, upReq upChatCompletionsRequest, upstreamModel string) {
 	upReq.Stream = true
 	b, _ := json.Marshal(upReq)
-	u := upstreamBase + "/v1/chat/completions"
+	u := joinURL(upstreamBase, "/chat/completions")
 	hreq, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+upstreamKey)
@@ -583,12 +584,12 @@ func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstre
 	sseWrite(w, fl, map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
-			"id": msgID,
-			"type": "message",
-			"role": "assistant",
-			"model": model,
+			"id":      msgID,
+			"type":    "message",
+			"role":    "assistant",
+			"model":   model,
 			"content": []any{},
-			"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
+			"usage":   map[string]any{"input_tokens": 0, "output_tokens": 0},
 		},
 	})
 
@@ -625,13 +626,13 @@ func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstre
 			if !textBlockStarted {
 				textBlockStarted = true
 				sseWrite(w, fl, map[string]any{
-					"type": "content_block_start",
-					"index": 0,
+					"type":          "content_block_start",
+					"index":         0,
 					"content_block": map[string]any{"type": "text", "text": ""},
 				})
 			}
 			sseWrite(w, fl, map[string]any{
-				"type": "content_block_delta",
+				"type":  "content_block_delta",
 				"index": 0,
 				"delta": map[string]any{"type": "text_delta", "text": c.Delta.Content},
 			})
@@ -664,12 +665,12 @@ func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstre
 						name = "tool"
 					}
 					sseWrite(w, fl, map[string]any{
-						"type": "content_block_start",
+						"type":  "content_block_start",
 						"index": anthIdx,
 						"content_block": map[string]any{
-							"type": "tool_use",
-							"id":   callID,
-							"name": name,
+							"type":  "tool_use",
+							"id":    callID,
+							"name":  name,
 							"input": map[string]any{},
 						},
 					})
@@ -677,10 +678,10 @@ func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstre
 				if tc.Function.Arguments != "" {
 					stopReason = "tool_use"
 					sseWrite(w, fl, map[string]any{
-						"type": "content_block_delta",
+						"type":  "content_block_delta",
 						"index": anthIdx,
 						"delta": map[string]any{
-							"type": "input_json_delta",
+							"type":         "input_json_delta",
 							"partial_json": tc.Function.Arguments,
 						},
 					})
@@ -704,7 +705,7 @@ func streamAnthropicViaOpenAI(ctx context.Context, w http.ResponseWriter, upstre
 	}
 
 	sseWrite(w, fl, map[string]any{
-		"type": "message_delta",
+		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": stopReason},
 		"usage": map[string]any{"output_tokens": 0},
 	})
@@ -755,6 +756,16 @@ func randHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func joinURL(base string, suffix string) string {
+	// base may already include /v1
+	b, err := url.Parse(strings.TrimRight(base, "/"))
+	if err != nil {
+		return strings.TrimRight(base, "/") + suffix
+	}
+	b.Path = path.Join(b.Path, strings.TrimPrefix(suffix, "/"))
+	return b.String()
 }
 
 func logging(next http.Handler) http.Handler {
