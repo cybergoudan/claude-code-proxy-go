@@ -1,48 +1,79 @@
-# Claude Code Proxy (Go)
+# claude-code-proxy-go
 
-把 **Claude Code** 需要的 **Anthropic Messages API**（`/v1/messages`）转成你现有的 **OpenAI-compatible Chat Completions API**（`/v1/chat/completions`）。
+A small Go proxy that lets **Claude Code** talk to an **OpenAI-compatible** upstream by exposing an **Anthropic Messages API**-compatible endpoint.
 
-目标：让 Claude Code 继续使用它的**复杂本地工具链**（bash/git/文件/MCP），同时模型走你自己的 `baseURL + key`。
+- Exposes: `POST /v1/messages` (Anthropic-style)
+- Forwards to: `POST /chat/completions` on your upstream (OpenAI Chat Completions style)
+- Supports streaming (SSE) and tool calling (best-effort)
 
-> 说明：Claude Code 的“复杂工具”大部分是本地执行；本项目重点是把 **tool_use / tool_result** + **SSE 流式**接起来。
+> Claude Code's "complex tools" (bash/git/files/MCP) are mostly executed **locally**; this proxy mainly bridges the **model API protocol**.
 
-## 快速开始
+## Why
+Claude Code natively expects Anthropic's Messages API. If you already have an OpenAI-compatible endpoint (self-hosted gateway, proxy, private vendor), this provides a compatibility layer.
 
-### 1) 启动代理
+## Install
+
+### Option A: run from source
 
 ```bash
-export UPSTREAM_BASE_URL="https://YOUR_HOST/v1"
-export UPSTREAM_API_KEY="YOUR_KEY"
-export UPSTREAM_MODEL="gpt-5.2"   # 你要用的模型名
-export LISTEN=":8088"
+git clone https://github.com/cybergoudan/claude-code-proxy-go
+cd claude-code-proxy-go
 
 go run .
 ```
 
-### 2) 让 Claude Code 走代理
+### Option B: build binary
+
+```bash
+go build -o claude-code-proxy .
+./claude-code-proxy
+```
+
+## Configuration (required)
+
+This proxy **does not** hardcode any URL or key. You must pass them via env vars.
+
+```bash
+export UPSTREAM_BASE_URL="https://YOUR_HOST/v1"   # upstream base, typically ends with /v1
+export UPSTREAM_API_KEY="YOUR_KEY"               # upstream bearer token
+export UPSTREAM_MODEL="gpt-5.2"                  # model id used upstream
+export LISTEN=":8088"                            # local listen address
+
+./claude-code-proxy
+```
+
+Health check:
+
+```bash
+curl -fsS http://127.0.0.1:8088/healthz
+```
+
+## Use with Claude Code
+
+Tell Claude Code to use the proxy as its Anthropic endpoint:
 
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8088"
-export ANTHROPIC_API_KEY="dummy"  # 代理不会用它
+export ANTHROPIC_API_KEY="dummy"  # unused by the proxy
 
-# 关闭 Anthropic 特有 tool_reference 自动检索（避免协议不兼容）
+# Recommended: disable Anthropic-specific tool search / tool_reference behaviors.
+# This avoids protocol mismatches with non-Anthropic upstreams.
 export ENABLE_TOOL_SEARCH="standard"
 
 claude
 ```
 
-## 支持范围（当前版本）
+## Notes / Limitations
 
-- `POST /v1/messages`
-- Anthropic tools → OpenAI `tools:function`
-- OpenAI tool_calls → Anthropic `tool_use`
-- OpenAI SSE → Anthropic SSE（message_start/content_block_delta/message_stop）
+- This is a **best-effort** protocol bridge.
+- Upstream must support **OpenAI Chat Completions** + streaming (`stream:true`) and tool calling (`tools` / `tool_calls`).
+- Some Anthropic-only features (e.g. `tool_reference` search) are intentionally not implemented.
 
-## 限制
+## Security
 
-- 只转发到 OpenAI-compatible **chat.completions**；如果你的上游是 `/v1/responses`，需要再加一层适配。
-- Anthropic 的 `tool_reference` / 动态工具检索不在本项目范围内（建议用 `ENABLE_TOOL_SEARCH=standard`）。
+- Keep your `UPSTREAM_API_KEY` in environment variables or a secret store.
+- Do not commit your keys to git.
 
-## 安全
+## License
 
-- 不会打印 `UPSTREAM_API_KEY`
+MIT
